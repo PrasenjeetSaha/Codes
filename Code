@@ -1,0 +1,38 @@
+import pandas as pd
+
+# Load the Excel file
+excel_file = pd.ExcelFile('SV.xlsx')
+
+# Read data from 'ServiceView Data' tab
+service_data = excel_file.parse('ServiceView Data')
+
+# Read data from 'ICs' tab
+ics_data = excel_file.parse('ICs')
+
+# Merge the data on CSO_EMPLID=EMPLID
+merged_data = pd.merge(service_data, ics_data, left_on='CSO_EMPLID', right_on='EMPLID', how='inner')
+
+# Convert date columns to datetime objects
+merged_data['OPEN_DATE'] = pd.to_datetime(merged_data['OPEN_DATE'])
+merged_data['join_date'] = pd.to_datetime(merged_data['join_date'])
+
+# Calculate 'Tenure Days'
+merged_data['Tenure Days'] = (merged_data['OPEN_DATE'] - merged_data['join_date']).dt.days
+
+# Create 'Tenure Group' based on 'Tenure Days'
+merged_data['Tenure Group'] = pd.cut(
+    merged_data['Tenure Days'],
+    bins=[-float('inf'), 365, float('inf')],
+    labels=['Less than 1 year', '1 year or above']
+)
+
+# Calculate median, standard deviation, and 'SLA Breaches'
+result = merged_data.groupby(['CTD', 'Tenure Group'])[['ACTUAL_DAYS', 'ESTIMATED_DAYS']].agg(
+    Median='median',
+    Std_Dev='std'
+).reset_index()
+
+result['SLA Breaches'] = result['Median'] - result['ESTIMATED_DAYS']
+
+# Save the result as a CSV file
+result.to_csv('result.csv', index=False)
