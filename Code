@@ -1,38 +1,122 @@
-import pandas as pd
+import fitz  # PyMuPDF
+import pytesseract
+from PIL import Image
+import io
+import re
 
-# Load the Excel file
-excel_file = pd.ExcelFile('SV.xlsx')
+# Function to extract text from an image using OCR
+def extract_text_from_image(image):
+    text = pytesseract.image_to_string(image)
+    return text
 
-# Read data from 'ServiceView Data' tab
-service_data = excel_file.parse('ServiceView Data')
+# Function to process each page and extract sections
+def process_page(page):
+    text_blocks = page.get_text("blocks")
+    sections = {
+        "revenue": [],
+        "tax_proofs": [],
+        "documentation": [],
+        "salary": [],
+        "loan_details": [],
+        "loan_payments": []
+    }
+    
+    for block in text_blocks:
+        x0, y0, x1, y1, text, block_no, block_type = block
+        if block_type == 0:  # text block
+            if "revenue" in text.lower():
+                sections["revenue"].append(text)
+            elif "tax" in text.lower():
+                sections["tax_proofs"].append(text)
+            elif "documentation" in text.lower():
+                sections["documentation"].append(text)
+            elif "salary" in text.lower():
+                sections["salary"].append(text)
+            elif "loan details" in text.lower():
+                sections["loan_details"].append(text)
+            elif "loan payments" in text.lower():
+                sections["loan_payments"].append(text)
+        elif block_type == 1:  # image block
+            image_bytes = page.get_image_data(block_no)
+            image = Image.open(io.BytesIO(image_bytes))
+            image_text = extract_text_from_image(image)
+            # similar checks as text blocks
+            if "revenue" in image_text.lower():
+                sections["revenue"].append(image_text)
+            elif "tax" in image_text.lower():
+                sections["tax_proofs"].append(image_text)
+            elif "documentation" in image_text.lower():
+                sections["documentation"].append(image_text)
+            elif "salary" in image_text.lower():
+                sections["salary"].append(image_text)
+            elif "loan details" in image_text.lower():
+                sections["loan_details"].append(image_text)
+            elif "loan payments" in image_text.lower():
+                sections["loan_payments"].append(image_text)
+    
+    return sections
 
-# Read data from 'ICs' tab
-ics_data = excel_file.parse('ICs')
+# Function to validate data
+def validate_data(sections):
+    validation_results = {}
 
-# Merge the data on CSO_EMPLID=EMPLID
-merged_data = pd.merge(service_data, ics_data, left_on='CSO_EMPLID', right_on='EMPLID', how='inner')
+    # Validate loan number in loan details
+    loan_details_text = ' '.join(sections["loan_details"])
+    loan_number_match = re.search(r'Loan Number: (\d+)', loan_details_text)
+    if loan_number_match:
+        loan_number = loan_number_match.group(1)
+        validation_results["loan_number"] = loan_number
+    else:
+        validation_results["loan_number"] = "Missing"
 
-# Convert date columns to datetime objects
-merged_data['OPEN_DATE'] = pd.to_datetime(merged_data['OPEN_DATE'])
-merged_data['join_date'] = pd.to_datetime(merged_data['join_date'])
+    # Validate revenue range
+    revenue_text = ' '.join(sections["revenue"])
+    revenue_matches = re.findall(r'Revenue: (\d+)', revenue_text)
+    revenue_numbers = list(map(int, revenue_matches))
+    if revenue_numbers:
+        min_revenue = min(revenue_numbers)
+        max_revenue = max(revenue_numbers)
+        if min_revenue >= 1000 and max_revenue <= 100000:
+            validation_results["revenue"] = "Valid"
+        else:
+            validation_results["revenue"] = "Out of range"
+    else:
+        validation_results["revenue"] = "Missing"
 
-# Calculate 'Tenure Days'
-merged_data['Tenure Days'] = (merged_data['OPEN_DATE'] - merged_data['join_date']).dt.days
+    return validation_results
 
-# Create 'Tenure Group' based on 'Tenure Days'
-merged_data['Tenure Group'] = pd.cut(
-    merged_data['Tenure Days'],
-    bins=[-float('inf'), 365, float('inf')],
-    labels=['Less than 1 year', '1 year or above']
-)
+# Main function to process PDF
+def process_pdf(file_path):
+    pdf_document = fitz.open(file_path)
+    all_sections = {
+        "revenue": [],
+        "tax_proofs": [],
+        "documentation": [],
+        "salary": [],
+        "loan_details": [],
+        "loan_payments": []
+    }
+    
+    for page_number in range(pdf_document.page_count):
+        page = pdf_document.load_page(page_number)
+        page_sections = process_page(page)
+        for section in all_sections:
+            all_sections[section].extend(page_sections[section])
 
-# Calculate median, standard deviation, and 'SLA Breaches'
-result = merged_data.groupby(['CTD', 'Tenure Group'])[['ACTUAL_DAYS', 'ESTIMATED_DAYS']].agg(
-    Median='median',
-    Std_Dev='std'
-).reset_index()
+    validation_results = validate_data(all_sections)
+    return all_sections, validation_results
 
-result['SLA Breaches'] = result['Median'] - result['ESTIMATED_DAYS']
+# Example usage
+pdf_file_path = 'path/to/your/pdf_file.pdf'
+sections, validation_results = process_pdf(pdf_file_path)
 
-# Save the result as a CSV file
-result.to_csv('result.csv', index=False)
+# Output the results
+print("Extracted Sections:")
+for section, content in sections.items():
+    print(f"\n{section.capitalize()}:")
+    for item in content:
+        print(item)
+
+print("\nValidation Results:")
+for key, result in validation_results.items():
+    print(f"{key.capitalize()}: {result}")
