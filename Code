@@ -3,6 +3,11 @@ import pytesseract
 from PIL import Image
 import io
 import re
+import csv
+import os
+
+# Specify the path to Tesseract executable
+pytesseract.pytesseract.tesseract_cmd = r'C:\Tesseract-OCR\tesseract.exe'
 
 # Function to extract text from an image using OCR
 def extract_text_from_image(image):
@@ -85,6 +90,26 @@ def validate_data(sections):
 
     return validation_results
 
+# Function to save results to a CSV file
+def save_to_csv(validation_results, csv_filename):
+    with open(csv_filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Field", "Validation Result"])
+        for key, value in validation_results.items():
+            writer.writerow([key, value])
+
+# Function to save sections to separate PDFs
+def save_sections_to_pdfs(sections, original_pdf_name):
+    for section, content in sections.items():
+        if content:
+            doc = fitz.open()
+            for text in content:
+                page = doc.new_page()
+                page.insert_text((72, 72), text)
+            new_filename = f"{original_pdf_name} - {section.capitalize()}.pdf"
+            doc.save(new_filename)
+            doc.close()
+
 # Main function to process PDF
 def process_pdf(file_path):
     pdf_document = fitz.open(file_path)
@@ -104,10 +129,19 @@ def process_pdf(file_path):
             all_sections[section].extend(page_sections[section])
 
     validation_results = validate_data(all_sections)
+
+    # Save validation results to a CSV file
+    csv_filename = os.path.splitext(file_path)[0] + "_validation_results.csv"
+    save_to_csv(validation_results, csv_filename)
+
+    # Save sections to separate PDFs
+    original_pdf_name = os.path.splitext(os.path.basename(file_path))[0]
+    save_sections_to_pdfs(all_sections, original_pdf_name)
+
     return all_sections, validation_results
 
 # Example usage
-pdf_file_path = 'path/to/your/pdf_file.pdf'
+pdf_file_path = 'path/to/your/sample_text.pdf'
 sections, validation_results = process_pdf(pdf_file_path)
 
 # Output the results
